@@ -1,0 +1,466 @@
+"""
+Created on Tue Jun 02 2026
+Corrected version with time conversion and linear drift correction
+"""
+
+import os
+import numpy as np
+import matplotlib.pyplot as plt
+
+
+# ------------------------------------------------------------
+# Paths
+# ------------------------------------------------------------
+
+path = r"C:\repos\02_Master\02_Vertiefungsmodule\03_Photon Sience\01_Research Laboratory Photon Science LU\02_Light_Tweezzers\Auswertung\Lighttweezers_auswertung\Daten\teil1"
+path_files = path
+
+os.makedirs(path, exist_ok=True)
+
+
+# ------------------------------------------------------------
+# Function to parse German decimal commas
+# ------------------------------------------------------------
+
+def parse_float(value):
+    return float(value.strip().replace(",", "."))
+
+
+# ------------------------------------------------------------
+# Function to extract data
+# ------------------------------------------------------------
+
+def extract_data(filepath):
+    """
+    Arguments:
+        filepath (str): Path to the data file
+
+    Returns:
+        time_values: time values in seconds
+        x_position: x position in pixels
+        y_position: y position in pixels
+    """
+
+    time_values = []
+    x_position = []
+    y_position = []
+
+    with open(filepath, "r") as file:
+        lines = file.readlines()
+
+        # skip header
+        for line in lines[1:]:
+            columns = line.strip().split(";")
+
+            if len(columns) > 5:
+                time_values.append(parse_float(columns[1]))  # 2nd column: time [s]
+                x_position.append(parse_float(columns[4]))   # 5th column: x position [px]
+                y_position.append(parse_float(columns[5]))   # 6th column: y position [px]
+
+    return np.array(time_values), np.array(x_position), np.array(y_position)
+
+
+# ------------------------------------------------------------
+# Input files and plot settings
+# ------------------------------------------------------------
+
+file_names = ["moving_3_bereinigt.csv", "moving_2_bereinigt.csv", "moving_1.csv"]
+
+colors = ["darkred", "forestgreen", "darkslateblue"]
+labels = ["1", "2", "3"]
+
+
+# ------------------------------------------------------------
+# Physical parameters
+# ------------------------------------------------------------
+
+T = 293.15              # K, room temperature
+R = 1.03e-6             # m, particle radius
+k_B = 1.380649e-23      # J/K
+
+eta_water = 1.002e-3    # Pa s, viscosity of water at around 20 °C
+
+# theoretical radial MSD slope for water
+# <r²> = s*t = 4Dt
+s_literature_si = (2 * k_B * T) / (3 * np.pi * R * eta_water)  # m²/s
+s_literature_um = s_literature_si * 1e12                       # µm²/s
+
+print(f"Literature radial MSD slope for water: s = {s_literature_um:.6f} µm²/s")
+print()
+
+
+# ------------------------------------------------------------
+# Analysis loop
+# ------------------------------------------------------------
+
+eta_values = []
+
+for i, file_name in enumerate(file_names):
+
+    filepath = os.path.join(path_files, file_name)
+
+    # --------------------------------------------------------
+    # Extract data
+    # --------------------------------------------------------
+
+    time_values, x_pos_px, y_pos_px = extract_data(filepath)
+
+    if len(time_values) < 2:
+        raise ValueError(f"Not enough data points in file {file_name}")
+
+    # shift time to start at zero
+    time_values = time_values - time_values[0]
+
+    # calculate delta t from data
+    delta_t = (time_values[-1] - time_values[0]) / (len(time_values) - 1)
+
+    print(f"--- Particle {labels[i]} ---")
+    print(f"File: {file_name}")
+    print(f"Number of frames: {len(time_values)}")
+    print(f"delta_t = {delta_t:.6f} s")
+    print(f"fps ≈ {1 / delta_t:.3f}")
+
+    # --------------------------------------------------------
+    # Convert pixels to micrometers
+    # --------------------------------------------------------
+
+    # sample dimensions:
+    # x: 130 µm over 1440 px -> 0.0903 µm/px
+    # y: 98 µm over 1080 px  -> 0.0907 µm/px
+
+    x_pos = x_pos_px * 0.0903
+    y_pos = y_pos_px * 0.0907
+
+    # --------------------------------------------------------
+    # Plot linear drift fit in x(t) and y(t)
+    # --------------------------------------------------------
+
+    # fit linear drift in x and y direction
+    drift_coeff_x = np.polyfit(time_values, x_pos, 1)
+    drift_coeff_y = np.polyfit(time_values, y_pos, 1)
+
+    x_drift = np.polyval(drift_coeff_x, time_values)
+    y_drift = np.polyval(drift_coeff_y, time_values)
+
+    plt.figure(figsize=(8, 5))
+
+    plt.plot(
+        time_values,
+        x_pos,
+        color="darkred",
+        label=r"$x(t)$ measured"
+    )
+
+    plt.plot(
+        time_values,
+        x_drift,
+        color="darkred",
+        linestyle="--",
+        label=rf"$x$ drift fit: $v_x={drift_coeff_x[0]:.3f}\,\mu m/s$"
+    )
+
+    plt.plot(
+        time_values,
+        y_pos,
+        color="forestgreen",
+        label=r"$y(t)$ measured"
+    )
+
+    plt.plot(
+        time_values,
+        y_drift,
+        color="forestgreen",
+        linestyle="--",
+        label=rf"$y$ drift fit: $v_y={drift_coeff_y[0]:.3f}\,\mu m/s$"
+    )
+
+    plt.xlabel(r"time $t$ [s]")
+    plt.ylabel(r"position [$\mu$m]")
+    plt.title(f"Linear drift fit particle {labels[i]}")
+    plt.grid(True, alpha=0.6)
+    plt.legend(loc="best")
+    plt.tight_layout()
+
+    plt.savefig(
+        os.path.join(path, f"drift_fit_particle_{labels[i]}.png"),
+        dpi=300,
+        bbox_inches="tight"
+    )
+
+    plt.show()
+
+    # --------------------------------------------------------
+    # Plot original trajectory
+    # --------------------------------------------------------
+
+    plt.figure(figsize=(6, 5))
+
+    plt.plot(
+        x_pos,
+        y_pos,
+        color=colors[i],
+        label=f"particle {labels[i]} original"
+    )
+
+    plt.plot(
+        x_pos[0],
+        y_pos[0],
+        marker="*",
+        color="black",
+        markersize=10,
+        markeredgecolor="black",
+        zorder=5,
+        label="start"
+    )
+
+    plt.plot(
+        x_pos[-1],
+        y_pos[-1],
+        marker="o",
+        color="black",
+        markersize=6,
+        markeredgecolor="black",
+        zorder=5,
+        label="end"
+    )
+
+    plt.xlabel(r"x position [$\mu$m]")
+    plt.ylabel(r"y position [$\mu$m]")
+    plt.grid(True, alpha=0.6)
+    plt.legend(loc="best")
+    plt.tight_layout()
+
+    plt.savefig(
+        os.path.join(path, f"trajectory_original_particle_{labels[i]}.png"),
+        dpi=300,
+        bbox_inches="tight"
+    )
+
+    plt.show()
+
+    # --------------------------------------------------------
+    # Linear drift correction
+    # --------------------------------------------------------
+
+    # fit linear drift in x and y direction
+    drift_coeff_x = np.polyfit(time_values, x_pos, 1)
+    drift_coeff_y = np.polyfit(time_values, y_pos, 1)
+
+    x_drift = np.polyval(drift_coeff_x, time_values)
+    y_drift = np.polyval(drift_coeff_y, time_values)
+
+    # subtract drift
+    x_pos_corr = x_pos - x_drift
+    y_pos_corr = y_pos - y_drift
+
+    # shift corrected trajectory to start at zero
+    x_pos_corr = x_pos_corr - x_pos_corr[0]
+    y_pos_corr = y_pos_corr - y_pos_corr[0]
+
+    print(f"Linear drift velocity x: {drift_coeff_x[0]:.6e} µm/s")
+    print(f"Linear drift velocity y: {drift_coeff_y[0]:.6e} µm/s")
+
+    # --------------------------------------------------------
+    # Plot drift-corrected trajectory
+    # --------------------------------------------------------
+
+    plt.figure(figsize=(6, 5))
+
+    plt.plot(
+        x_pos_corr,
+        y_pos_corr,
+        color=colors[i],
+        label=f"particle {labels[i]} drift corrected"
+    )
+
+    plt.plot(
+        x_pos_corr[0],
+        y_pos_corr[0],
+        marker="*",
+        color="black",
+        markersize=10,
+        markeredgecolor="black",
+        zorder=5,
+        label="start"
+    )
+
+    plt.plot(
+        x_pos_corr[-1],
+        y_pos_corr[-1],
+        marker="o",
+        color="black",
+        markersize=6,
+        markeredgecolor="black",
+        zorder=5,
+        label="end"
+    )
+
+    plt.xlabel(r"drift-corrected x position [$\mu$m]")
+    plt.ylabel(r"drift-corrected y position [$\mu$m]")
+    plt.grid(True, alpha=0.6)
+    plt.legend(loc="best")
+    plt.tight_layout()
+
+    plt.savefig(
+        os.path.join(path, f"trajectory_drift_corrected_particle_{labels[i]}.png"),
+        dpi=300,
+        bbox_inches="tight"
+    )
+
+    plt.show()
+
+    # --------------------------------------------------------
+    # Calculate squared displacements relative to initial point
+    # --------------------------------------------------------
+
+    x_squared_displacements = (x_pos_corr - x_pos_corr[0]) ** 2
+    y_squared_displacements = (y_pos_corr - y_pos_corr[0]) ** 2
+
+    # --------------------------------------------------------
+    # Time-averaged mean squared displacement
+    # according to the task:
+    #
+    # <x²>(t_n) = sum_i=1^n x²(t_i) / n
+    # --------------------------------------------------------
+
+    n_values = np.arange(1, len(time_values) + 1)
+
+    x_msd = np.cumsum(x_squared_displacements) / n_values
+    y_msd = np.cumsum(y_squared_displacements) / n_values
+    r_msd = x_msd + y_msd
+
+    # --------------------------------------------------------
+    # Linear fits against real time
+    # --------------------------------------------------------
+
+    # Optional: exclude first point because it is exactly zero
+    fit_start = 1
+
+    # Optional: use only first part of MSD curve for the fit
+    fit_fraction = 1.0
+    fit_end = int(fit_fraction * len(time_values))
+
+    fit_time = time_values[fit_start:fit_end]
+    fit_x_msd = x_msd[fit_start:fit_end]
+    fit_y_msd = y_msd[fit_start:fit_end]
+    fit_r_msd = r_msd[fit_start:fit_end]
+
+    slope_x, intercept_x = np.polyfit(fit_time, fit_x_msd, 1)
+    slope_y, intercept_y = np.polyfit(fit_time, fit_y_msd, 1)
+    slope_r, intercept_r = np.polyfit(fit_time, fit_r_msd, 1)
+
+    fit_line_x = slope_x * time_values + intercept_x
+    fit_line_y = slope_y * time_values + intercept_y
+    fit_line_r = slope_r * time_values + intercept_r
+
+    # --------------------------------------------------------
+    # Effective viscosity
+    # --------------------------------------------------------
+
+    # slope_r has unit µm²/s because fit was done against time in seconds
+    slope_r_si = slope_r * 1e-12  # µm²/s -> m²/s
+
+    eta_eff = (2 * k_B * T) / (3 * np.pi * R * slope_r_si)
+
+    eta_values.append(eta_eff)
+
+    print(f"X MSD slope:      {slope_x:.6e} µm²/s")
+    print(f"Y MSD slope:      {slope_y:.6e} µm²/s")
+    print(f"Radial MSD slope: {slope_r:.6e} µm²/s")
+    print(f"Literature slope: {s_literature_um:.6e} µm²/s")
+    print(f"Measured/literature slope ratio: {slope_r / s_literature_um:.6f}")
+    print(f"Effective viscosity: {eta_eff:.6e} Pa s")
+    print(f"Effective viscosity: {eta_eff * 1000:.6f} mPa s")
+    print(f"Water literature viscosity: {eta_water * 1000:.6f} mPa s")
+    print(f"eta_eff / eta_water: {eta_eff / eta_water:.6f}")
+    print()
+
+    # --------------------------------------------------------
+    # Plot MSD
+    # --------------------------------------------------------
+
+    plt.figure(figsize=(7, 5))
+
+    plt.plot(
+        time_values,
+        x_msd,
+        color="gold",
+        label=rf"$\langle x^2 \rangle$ particle {labels[i]}"
+    )
+
+    plt.plot(
+        time_values,
+        y_msd,
+        color="darkorange",
+        label=rf"$\langle y^2 \rangle$ particle {labels[i]}"
+    )
+
+    plt.plot(
+        time_values,
+        r_msd,
+        color="gray",
+        alpha=0.8,
+        label=rf"$\langle r^2 \rangle = \langle x^2 \rangle + \langle y^2 \rangle$"
+    )
+
+    plt.plot(
+        time_values,
+        fit_line_x,
+        color=colors[i],
+        lw=2,
+        linestyle="--",
+        label=rf"x fit: $s_x={slope_x:.2e}\,\mu m^2/s$"
+    )
+
+    plt.plot(
+        time_values,
+        fit_line_y,
+        color=colors[i],
+        lw=2,
+        linestyle=":",
+        label=rf"y fit: $s_y={slope_y:.2e}\,\mu m^2/s$"
+    )
+
+    plt.plot(
+        time_values,
+        fit_line_r,
+        color="black",
+        lw=2,
+        linestyle="--",
+        label=rf"radial fit: $s_r={slope_r:.2e}\,\mu m^2/s$"
+    )
+
+    plt.xlabel(r"time $t$ [s]")
+    plt.ylabel(r"time-averaged mean squared displacement [$\mu$m$^2$]")
+    plt.grid(True, alpha=0.6)
+    plt.legend(loc="best")
+    plt.tight_layout()
+
+    plt.savefig(
+        os.path.join(path, f"msd_drift_corrected_particle_{labels[i]}.png"),
+        dpi=300,
+        bbox_inches="tight"
+    )
+
+    plt.show()
+
+
+# ------------------------------------------------------------
+# Mean and uncertainty of effective viscosity
+# ------------------------------------------------------------
+
+eta_values = np.array(eta_values)
+
+eta_mean = np.mean(eta_values)
+eta_std = np.std(eta_values, ddof=1)
+eta_sem = eta_std / np.sqrt(len(eta_values))
+
+print("========================================")
+print("Summary")
+print("========================================")
+print(f"Mean effective viscosity: {eta_mean:.6e} Pa s")
+print(f"Mean effective viscosity: {eta_mean * 1000:.6f} mPa s")
+print(f"Standard deviation:       {eta_std:.6e} Pa s")
+print(f"Standard error:           {eta_sem:.6e} Pa s")
+print()
+print(f"Result: eta_eff = ({eta_mean * 1000:.6f} ± {eta_sem * 1000:.6f}) mPa s")
